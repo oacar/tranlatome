@@ -1,4 +1,5 @@
-## Inputs -------------
+# -*- coding: utf-8 -*-
+# # Inputs -------------
 
 library(tidyverse)
 library(glue)
@@ -7,24 +8,39 @@ library(ggsignif)
 library(cowplot)
 library(readxl)
 
-pgs <- readr::read_csv('analysis/data/raw_data/transient_annotated_intergenic_041421')
+setwd('../')
+
+pgs <- data.table::fread('/home/acwach/YeastTest/named_transient_orfs')
+colnames(pgs) <- c('V1', 'orf_name')
 overlappingorfs <- read_csv("analysis/data/raw_data/overlappingorfs.csv")
+#pgs<-pgs[pgs$orf_name %in% overlappingorfs$orf_name==FALSE,]
 net.df <- readRDS("analysis/data/derived_data/SGA_data_combined.rds.gz")
 net_df_significant <- filter(net.df, `P-value` <= 0.05 & `Query Strain ID` %in% overlappingorfs$orf_name == FALSE & `Array Strain ID` %in% overlappingorfs$orf_name == FALSE)
-net_df_significant_sl <- filter(net_df_significant, `Genetic interaction score (ε)` <= -0.2)#& `Double mutant fitness standard deviation`<=0.1)
+#net_df_significant_sl <- filter(net_df_significant, `Genetic interaction score (ε)` <= -0.2)#& `Double mutant fitness standard deviation`<=0.1)
 exp.data <- read_csv("analysis/data/derived_data/strain_ids_with_experiment_count_all.csv")%>% mutate(group=ifelse(`Systematic gene name`%in%pgs$orf_name,'proto-gene',maincat))
 strain_ids_smf <- read_excel("analysis/data/raw_data/strain_ids_and_single_mutant_fitness.xlsx")
 
-
-
+net_df_significant%>% filter(`P-value`<=0.05,`Genetic interaction score (ε)` <= -0.2) %>%
+  filter(`Query Strain ID` == "YER175W-A" | `Array Strain ID` == "YER175W-A")
 ## Calculate strong (eps<-0.2) and lethal (eps<-0.35) interactions -----
-strong_orf_list <- net.df %>% filter(`P-value`<=0.05,`Genetic interaction score (ε)` <= -0.2) %>% select(`Query Strain ID`, `Array Strain ID`) %>% as.list() %>% unlist() %>% unique()
-lethal_orf_list <- net.df %>% filter(`P-value`<=0.05,`Genetic interaction score (ε)` <= -0.35) %>% select(`Query Strain ID`, `Array Strain ID`) %>% as.list() %>% unlist() %>% unique()
+strong_orf_list <- net_df_significant%>% filter(`P-value`<=0.05,`Genetic interaction score (ε)` <= -0.2) %>% select(`Query Strain ID`, `Array Strain ID`) %>% as.list() %>% unlist() %>% unique()
+lethal_orf_list <- net_df_significant%>% filter(`P-value`<=0.05,`Genetic interaction score (ε)` <= -0.35) %>% select(`Query Strain ID`, `Array Strain ID`) %>% as.list() %>% unlist() %>% unique()
 exp.data <- exp.data %>% mutate(strong_interaction=ifelse(`Systematic gene name`%in%strong_orf_list,TRUE,FALSE),
-                          lethal_interaction=ifelse(`Systematic gene name`%in%lethal_orf_list,TRUE,FALSE))
+                          lethal_interaction=ifelse(`Systematic gene name`%in%lethal_orf_list,TRUE,FALSE))%>% filter(`Systematic gene name`%in%overlappingorfs$orf_name ==F)
 
 exp_data_nones=exp.data %>% filter(group!='essential')
+con = DBI::dbConnect(RMariaDB::MariaDB(), groups = "mariaDB")
+translation <- DBI::dbGetQuery(con, "SELECT * FROM aaron.scer_orfs_translation_info")
+#81/94
+translation %>%filter(gene_systematic_name %in% pgs$orf_name[pgs$orf_name%in%exp_data_nones$`Systematic gene name`])%>%select(orf_class)%>%group_by(orf_class)%>%count()
+pgs_overlap  <- pgs %>% filter(orf_name %in% overlappingorfs$orf_name)
+exp_data_nones %>% filter(`Systematic gene name`%in% overlappingorfs$orf_name)
 
+#3901/(3901+772)
+table(exp_data_nones$group,exp_data_nones$strong_interaction)
+prop.table(table(exp_data_nones$group,exp_data_nones$strong_interaction),1)
+table(exp_data_nones$group,exp_data_nones$lethal_interaction)
+prop.table(table(exp_data_nones$group,exp_data_nones$lethal_interaction), 1)
 ## Compare interaction ratios of transient orfs and nonessential orfs with fisher.test ----
 strong_interaction_pval <- table(exp_data_nones$group,exp_data_nones$strong_interaction) %>% fisher.test() #0.04652
 lethal_interaction_pval <- table(exp_data_nones$group,exp_data_nones$lethal_interaction) %>% fisher.test() #0.02636
@@ -43,20 +59,22 @@ percent_plot_data <- exp_data_nones %>%
 
 percent_plot <-percent_plot_data %>%
   ggplot(aes(x=cat,y=freq,fill=group))+
-  geom_bar(stat = "identity", position = position_dodge(width = 0.95)) + theme_classic() + theme(
+  geom_bar(stat = "identity", position = position_dodge(width = 0.95)) + theme_bw() + theme(
     axis.title.x = element_text(size = 8), axis.text.x = element_text(size = 10), axis.text.y = element_text(size = 8),axis.title.y=element_text(size=12),
-    legend.text = element_text(size = 8), legend.position = "right", legend.title = element_blank(), legend.margin = margin(t=-0.25,unit='in'),
+    legend.text = element_text(size = 8), legend.position = "bottom", legend.title = element_blank(), legend.margin = margin(t=-0.25,unit='in'),
     legend.spacing.x = unit(0.1, 'in')
   ) +
-  scale_fill_manual(labels = c("Transient ORFs", "Nonessential\nGenes"), values = c("#1CBDC2", "#EF3D23")) +
-  scale_x_discrete(labels = c(expression(epsilon * "< -0.2"), expression(epsilon * "<-0.35"))) +
-  ylab("Ratio with at least one\ninteraction at given threshold") + scale_y_continuous(labels = scales::percent) + xlab("") +
+  scale_fill_manual(labels = c("Transient ORFs", "Nonessential\nGenes"), values = c("#673ab7", "#9e9e9e")) +
+  scale_x_discrete(labels = c(paste0("\u03B5", "< -0.2"), paste0("\u03B5" , "<-0.35"))) +
+  ylab("Percent with at least one\ninteraction at given threshold") + scale_y_continuous(labels = scales::percent) + xlab("") +
   geom_signif(
     y_position = c(1.05, 0.85), xmin = c(0.8, 1.8), xmax = c(1.2, 2.2),
     annotation = c(glue("p={format.pval(strong_interaction_pval$p.value,2)}"),glue("p={format.pval(lethal_interaction_pval$p.value,2)}")), tip_length = .1
   )
 ggsave(plot = percent_plot,filename = 'figures/Figure7B.pdf',width = 4,height = 4)
 
+
+percent_plot
 
 #compare smf to wild type fitness of 1 -----
 strain_ids_smf$smf <- strain_ids_smf[, 4] %>%
@@ -89,8 +107,6 @@ pgs_allele <- exp.data %>%
 allnet <- graph_from_data_frame(net_df_significant_sl[,c(2,4,6)],directed=FALSE)
 allnet <- simplify(allnet)
 allnet.deg<-degree(allnet)
-
-
 
 #if(plot_histogram){
 allnet.deg.pgs <- allnet.deg[names(allnet.deg)%in%pgs_allele]
